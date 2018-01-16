@@ -5,6 +5,16 @@
  */
 namespace Magento\Sales\Block\Order;
 
+use Magento\Framework\View\Element\Template\Context;
+use Magento\Sales\Model\ResourceModel\Order\CollectionFactory;
+use Magento\Customer\Model\Session;
+use Magento\Sales\Model\Order\Config;
+use Magento\Store\Model\StoreManagerInterface;
+use Magento\Sales\Api\OrderRepositoryInterface;
+use Magento\Framework\Api\FilterBuilder;
+use Magento\Framework\Api\SearchCriteriaBuilder;
+use Magento\Framework\Api\SortOrderBuilder;
+
 /**
  * Sales order history block
  *
@@ -29,25 +39,66 @@ class Recent extends \Magento\Framework\View\Element\Template
     protected $_orderConfig;
 
     /**
+     * @var StoreManagerInterface
+     */
+    protected $storeManager;
+
+    /**
+     * @var \Magento\Sales\Api\OrderRepositoryInterface
+     */
+    protected $orderRepository;
+
+    /**
+     * @var FilterBuilder
+     */
+    protected $filterBuilder;
+
+    /**
+     * @var \Magento\Framework\Api\SearchCriteriaBuilder
+     */
+    protected $searchCriteriaBuilder;
+
+    /**
+     * @var SortOrderBuilder
+     */
+    protected $sortOrderBuilder;
+
+    /**
      * @param \Magento\Framework\View\Element\Template\Context $context
      * @param \Magento\Sales\Model\ResourceModel\Order\CollectionFactory $orderCollectionFactory
      * @param \Magento\Customer\Model\Session $customerSession
      * @param \Magento\Sales\Model\Order\Config $orderConfig
+     * @param \Magento\Store\Model\StoreManagerInterface $storeManager
+     * @param \Magento\Sales\Api\OrderRepositoryInterface $orderRepository
+     * @param FilterBuilder $filterBuilder
+     * @param SearchCriteriaBuilder $searchCriteriaBuilder
+     * @param \Magento\Framework\Api\SortOrderBuilder $sortOrderBuilder
      * @param array $data
      */
     public function __construct(
-        \Magento\Framework\View\Element\Template\Context $context,
-        \Magento\Sales\Model\ResourceModel\Order\CollectionFactory $orderCollectionFactory,
-        \Magento\Customer\Model\Session $customerSession,
-        \Magento\Sales\Model\Order\Config $orderConfig,
+        Context $context,
+        CollectionFactory $orderCollectionFactory,
+        Session $customerSession,
+        Config $orderConfig,
+        StoreManagerInterface $storeManager,
+        OrderRepositoryInterface $orderRepository,
+        FilterBuilder $filterBuilder,
+        SearchCriteriaBuilder $searchCriteriaBuilder,
+        SortOrderBuilder $sortOrderBuilder,
         array $data = []
     ) {
         $this->_orderCollectionFactory = $orderCollectionFactory;
         $this->_customerSession = $customerSession;
         $this->_orderConfig = $orderConfig;
+        $this->storeManager = $storeManager;
+        $this->orderRepository = $orderRepository;
+        $this->filterBuilder = $filterBuilder;
+        $this->searchCriteriaBuilder = $searchCriteriaBuilder;
+        $this->sortOrderBuilder = $sortOrderBuilder;
         parent::__construct($context, $data);
         $this->_isScopePrivate = true;
     }
+
 
     /**
      * @return void
@@ -55,21 +106,44 @@ class Recent extends \Magento\Framework\View\Element\Template
     protected function _construct()
     {
         parent::_construct();
-        $orders = $this->_orderCollectionFactory->create()->addAttributeToSelect(
-            '*'
-        )->addAttributeToFilter(
+
+        $this->getLatestOrders();
+    }
+
+    /**
+     * Get latest placed orders per customer and current store limit by 5
+     */
+    protected function getLatestOrders()
+    {
+        $this->searchCriteriaBuilder->addFilter(
             'customer_id',
             $this->_customerSession->getCustomerId()
-        )->addAttributeToFilter(
+        );
+
+        $this->searchCriteriaBuilder->addFilter(
             'status',
-            ['in' => $this->_orderConfig->getVisibleOnFrontStatuses()]
-        )->addAttributeToSort(
-            'created_at',
-            'desc'
-        )->setPageSize(
-            '5'
-        )->load();
-        $this->setOrders($orders);
+            $this->_orderConfig->getVisibleOnFrontStatuses(),
+            'in'
+        );
+
+        $this->searchCriteriaBuilder->addFilter(
+            'store_id',
+            $this->_storeManager->getStore()
+                ->getId()
+        );
+
+        $sortOrder = $this->sortOrderBuilder
+            ->setField('created_at')
+            ->setDirection('DESC')
+            ->create();
+
+        $this->searchCriteriaBuilder->setPageSize(5);
+
+        $this->searchCriteriaBuilder->addSortOrder($sortOrder);
+
+        $searchResults = $this->orderRepository->getList($this->searchCriteriaBuilder->create())->getItems();
+
+        $this->setOrders($searchResults);
     }
 
     /**
@@ -95,7 +169,7 @@ class Recent extends \Magento\Framework\View\Element\Template
      */
     protected function _toHtml()
     {
-        if ($this->getOrders()->getSize() > 0) {
+        if (sizeof($this->getOrders()) > 0) {
             return parent::_toHtml();
         }
         return '';
